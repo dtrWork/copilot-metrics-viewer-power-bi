@@ -20,7 +20,7 @@ This project builds a Power BI dashboard consuming the **GitHub Copilot Usage Me
 
 | Table name (Power BI) | Key columns |
 |---|---|
-| `GH Copilot - summary` | `day` (date), `daily_active_users`, `monthly_active_users`, `ide_chat_interactions`, `code_completion_acceptances`, `dotcom_chat_interactions`, `pr_created`, `total_loc_added_sum`, `total_loc_suggested_to_add_sum`, `total_code_acceptance_activity_count`, `total_code_generation_activity_count` |
+| `GH Copilot - summary` | `day` (date), `daily_active_users`, `monthly_active_users`, `ide_chat_interactions`, `code_completion_acceptances`, `dotcom_chat_interactions`, `pr_created`, `total_loc_added_sum`, `total_loc_suggested_to_add_sum`, `total_loc_deleted_sum`, `total_loc_changed_sum` (added+deleted), `line_acceptance_rate`, `total_code_acceptance_activity_count`, `total_code_generation_activity_count` |
 | `GH Copilot - ide chat` | `day` (date), `model_name`, `total_chats`, `chat_acceptance_count`, `chat_acceptance_rate` |
 | `GH Copilot - ide code completions editors` | `day` (date), `language_name`, `code_acceptance_count`, `code_generation_count`, `lines_accepted`, `lines_suggested`, `code_acceptance_rate`, `line_acceptance_rate` |
 | `GH Copilot - ide code completions languages` | `day` (date), `language`, `feature`, `lang_code_acceptance_activity_count`, `lang_code_generation_activity_count`, `lang_loc_added_sum`, `lang_loc_suggested_to_add_sum` |

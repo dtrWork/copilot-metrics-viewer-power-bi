@@ -18,6 +18,7 @@ let
         "total_code_generation_activity_count",
         "total_loc_added_sum",
         "total_loc_suggested_to_add_sum",
+        "total_loc_deleted_sum",
         "totals_by_feature",
         "pull_requests"
     }),
@@ -35,8 +36,18 @@ let
         each if [pull_requests] <> null and Record.HasFields([pull_requests], "total_created")
              then [pull_requests][total_created] else null,
         Int64.Type),
+    WithLocChanged = Table.AddColumn(WithPR, "total_loc_changed_sum",
+        each
+            let a = if [total_loc_added_sum] = null then 0 else [total_loc_added_sum],
+                d = if [total_loc_deleted_sum] = null then 0 else [total_loc_deleted_sum]
+            in a + d,
+        Int64.Type),
+    WithLineRate = Table.AddColumn(WithLocChanged, "line_acceptance_rate",
+        each if [total_loc_suggested_to_add_sum] = null or [total_loc_suggested_to_add_sum] = 0 then null
+             else [total_loc_added_sum] / [total_loc_suggested_to_add_sum],
+        type number),
 
-    Result = Table.SelectColumns(WithPR, {
+    Result = Table.SelectColumns(WithLineRate, {
         "day",
         "daily_active_users",
         "monthly_active_users",
@@ -44,6 +55,9 @@ let
         "total_code_generation_activity_count",
         "total_loc_added_sum",
         "total_loc_suggested_to_add_sum",
+        "total_loc_deleted_sum",
+        "total_loc_changed_sum",
+        "line_acceptance_rate",
         "ide_chat_interactions",
         "code_completion_acceptances",
         "dotcom_chat_interactions",
