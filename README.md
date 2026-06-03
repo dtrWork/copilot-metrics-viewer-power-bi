@@ -55,6 +55,13 @@ In order to connect we'll need to generate a token and link to your metrics data
 
 > **IMPORTANT: Do not share this token and ensure you follow your organization's security policies.**
 
+> **SAML SSO:** If your organization enforces SAML Single Sign-On, you must also authorize the token for that organization after creating it:
+> 1. Go to **GitHub.com → Settings → Developer settings → Personal access tokens**
+> 2. Find the token you just created and click **"Configure SSO"**
+> 3. Click **"Authorize"** next to your organization name and complete the SSO login
+>
+> Without this step, API calls will return a `403` error even with correct scopes.
+
 4. The file contains the following data sources:
 
     | Name                               | Description                                                   |
