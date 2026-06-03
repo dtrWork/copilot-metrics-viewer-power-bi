@@ -112,76 +112,100 @@ Each visual is a `visualContainer` dict inside `section.visualContainers`:
 
 ---
 
-## Python Script Template
+## Python Script Template — SAFE REPACK (MANDATORY)
 
-Use this pattern for every visual injection:
+⚠️ **NEVER** use `Expand-Archive` + `os.walk` + `ZipFile('w', ZIP_DEFLATED)` — this breaks entry order and corrupts the DataModel (causes "MashupValidationError").
+
+**ALWAYS** use this in-memory pattern: read from original, write to new, copy entries verbatim in original order, replace ONLY `Report/Layout`:
 
 ```python
-import json, zipfile, uuid, os, shutil
+import json, zipfile, uuid, shutil, os
 
 PBIX = r"samples\GitHub Copilot - Telemetry Sample (Metrics with KPI).pbix"
-EXTRACTED = r"samples\_pbix_work"
 
-# 1. Extract
-if os.path.exists(EXTRACTED):
-    shutil.rmtree(EXTRACTED)
-with zipfile.ZipFile(PBIX, 'r') as z:
-    z.extractall(EXTRACTED)
 
-# 2. Read Layout
-layout_path = os.path.join(EXTRACTED, "Report", "Layout")
-raw = open(layout_path, 'rb').read()
-# Strip BOM if present
-if raw[:2] == b'\xff\xfe':
-    content = raw[2:].decode('utf-16-le')
-else:
-    content = raw.decode('utf-16-le')
-layout = json.loads(content)
+def read_layout(zin: zipfile.ZipFile) -> dict:
+    raw = zin.read("Report/Layout")
+    content = raw[2:].decode('utf-16-le') if raw[:2] == b'\xff\xfe' else raw.decode('utf-16-le')
+    return json.loads(content)
 
-# 3. Find target page
+
+def write_layout(layout: dict) -> bytes:
+    out = json.dumps(layout, separators=(',', ':'), ensure_ascii=False).encode('utf-16-le')
+    assert out[:2] == b'\x7b\x00', f"BOM error: {out[:2].hex()}"
+    return out
+
+
+def repack_pbix(pbix_path: str, new_layout_bytes: bytes):
+    """
+    Rebuild PBIX preserving EXACT entry order and compress_type.
+    Never extracts to disk. Only Report/Layout is replaced.
+    """
+    backup = pbix_path + '.bak'
+    shutil.copy2(pbix_path, backup)
+    try:
+        with zipfile.ZipFile(backup, 'r') as zin:
+            with zipfile.ZipFile(pbix_path, 'w', allowZip64=True) as zout:
+                for item in zin.infolist():
+                    if item.filename == 'Report/Layout':
+                        new_item = zipfile.ZipInfo(item.filename, item.date_time)
+                        new_item.compress_type = item.compress_type
+                        zout.writestr(new_item, new_layout_bytes)
+                    else:
+                        # Copy verbatim: preserves compress_type and all metadata
+                        zout.writestr(item, zin.read(item.filename))
+        os.remove(backup)
+    except Exception:
+        shutil.copy2(backup, pbix_path)  # restore on failure
+        os.remove(backup)
+        raise
+
+
+# ── Usage ────────────────────────────────────────────────────────────────────
+
+# 1. Read layout from PBIX (in-memory, no disk extraction)
+with zipfile.ZipFile(PBIX, 'r') as zin:
+    layout = read_layout(zin)
+
+# 2. Find target page
 page = next(s for s in layout['sections'] if s['displayName'] == 'Sample Dashboard')
 
-# 4. Build visual container
+# 3. Build visual container
 visual_config = {
-    "name": str(uuid.uuid4()).replace('-','')[:20],
+    "name": str(uuid.uuid4()).replace('-', '')[:20],
     "layouts": [{"id": 0, "position": {"x": X, "y": Y, "z": 0, "width": W, "height": H, "tabOrder": TABORDER}}],
     "singleVisual": {
         "visualType": "VISUAL_TYPE",
         "projections": { ... },
         "prototypeQuery": { ... },
         "vcObjects": {
-            "title": [{"properties": {"text": {"expr": {"Literal": {"Value": "'TITLE'"}}}, "show": {"expr": {"Literal": {"Value": "true"}}}}}]
+            "title": [{"properties": {
+                "show": {"expr": {"Literal": {"Value": "true"}}},
+                "text": {"expr": {"Literal": {"Value": "'TITLE'"}}}
+            }}]
         }
     }
 }
 vc = {
     "x": X, "y": Y, "z": TABORDER, "width": W, "height": H,
     "tabOrder": TABORDER,
-    "config": json.dumps(visual_config, separators=(',',':'), ensure_ascii=False),
+    "config": json.dumps(visual_config, separators=(',', ':'), ensure_ascii=False),
     "filters": "[]"
 }
+json.loads(vc["config"])  # validate before inserting
 page['visualContainers'].append(vc)
 
-# 5. Write Layout — raw UTF-16 LE, NO BOM
-out = json.dumps(layout, separators=(',',':'), ensure_ascii=False).encode('utf-16-le')
-open(layout_path, 'wb').write(out)
-assert open(layout_path, 'rb').read(2) == b'\x7b\x00', "BOM ERROR"
+# 4. Repack (preserves entry order + compress_type, replaces only Layout)
+new_layout_bytes = write_layout(layout)
+repack_pbix(PBIX, new_layout_bytes)
 
-# 6. Repack
-os.remove(PBIX)
-with zipfile.ZipFile(PBIX, 'w', zipfile.ZIP_DEFLATED) as zout:
-    for root, _, files in os.walk(EXTRACTED):
-        for f in files:
-            full = os.path.join(root, f)
-            rel = os.path.relpath(full, EXTRACTED).replace('\\', '/')
-            zout.write(full, rel)
-shutil.rmtree(EXTRACTED)
-
-# 7. Verify
+# 5. Verify
 with zipfile.ZipFile(PBIX, 'r') as zv:
-    entry = next(e for e in zv.infolist() if e.filename == 'Report/Layout')
-    data = zv.read(entry.filename)[:4]
-print(f"OK — first bytes: {data.hex().upper()}")
+    data = zv.read('Report/Layout')[:4]
+    entries = [i.filename for i in zv.infolist()]
+assert data == b'\x7b\x00\x22\x00', f"Layout encoding error: {data.hex()}"
+assert entries[0] == '[Content_Types].xml', "Entry order broken"
+print(f"OK — Layout: {data.hex().upper()}, entries: {len(entries)}")
 ```
 
 ---
@@ -190,9 +214,11 @@ print(f"OK — first bytes: {data.hex().upper()}")
 
 - NEVER write the Layout with a BOM (`\xff\xfe`). Always verify `first_bytes == b'\x7b\x00'`.
 - NEVER use column names with dots (e.g., `chat.acceptance.rate`). Use underscores only.
-- NEVER use `shutil.make_archive` to repack — it corrupts the zip structure.
+- NEVER use `shutil.make_archive` or `os.walk`+`ZipFile('w', ZIP_DEFLATED)` to repack — these corrupt entry order and the DataModel, causing "MashupValidationError" in Power BI.
+- NEVER extract the PBIX to disk and repack from disk. ALWAYS use the in-memory pattern above.
 - NEVER modify `DataModel`, `Connections`, `SecurityBindings`, or `Version` files.
 - ALWAYS use the exact table names from the table reference above (with spaces and dashes).
-- ALWAYS test the visual config is valid JSON before inserting (use `json.loads(json.dumps(...))`).
+- ALWAYS call `json.loads(vc["config"])` before inserting to validate config JSON.
+- ALWAYS verify after repack: Layout first bytes == `7B 00 22 00` AND `[Content_Types].xml` is first entry.
+- ALWAYS create a `.bak` backup before overwriting the PBIX, restore it on any exception.
 - If the screenshot shows a title, set it in `vcObjects.title`. If no title, omit `vcObjects`.
-- After repacking, ALWAYS verify the zip opens and Layout first bytes are `7B 00`.
