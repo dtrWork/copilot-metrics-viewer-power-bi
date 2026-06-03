@@ -1,8 +1,7 @@
 let
     // Depends on: source query (organization_metrics.pq or enterprise_metrics.pq)
     // One row per day for GitHub.com (dotcom) chat usage only.
-    // totals_by_feature items have the same field names as day-level totals,
-    // so they are renamed here with a "dotcom_chat_" prefix to avoid conflicts.
+    // Column names use underscores (Power BI does not support dots in new column names).
     Expanded = Table.ExpandListColumn(source, "totals_by_feature"),
     Fields = Table.ExpandRecordColumn(Expanded, "totals_by_feature",
         {
@@ -15,14 +14,18 @@ let
         },
         {
             "feature",
-            "dotcom_chat_user_initiated_interaction_count",
-            "dotcom_chat_code_acceptance_activity_count",
-            "dotcom_chat_code_generation_activity_count",
-            "dotcom_chat_loc_added_sum",
-            "dotcom_chat_loc_suggested_to_add_sum"
+            "dotcom_chat_interactions",
+            "dotcom_chat_acceptance_count",
+            "dotcom_chat_generation_count",
+            "dotcom_chat_loc_added",
+            "dotcom_chat_loc_suggested"
         }
     ),
     Filtered = Table.SelectRows(Fields, each [feature] = "dotcom_chat"),
-    Typed = Table.TransformColumnTypes(Filtered, {{"day", type date}})
+    WithRate = Table.AddColumn(Filtered, "dotcom_chat_acceptance_rate",
+        each if [dotcom_chat_generation_count] = null or [dotcom_chat_generation_count] = 0 then null
+             else [dotcom_chat_acceptance_count] / [dotcom_chat_generation_count],
+        type number),
+    Typed = Table.TransformColumnTypes(WithRate, {{"day", type date}})
 in
     Typed
