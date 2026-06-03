@@ -101,14 +101,72 @@ Each visual is a `visualContainer` dict inside `section.visualContainers`:
 
 ## Approach
 
-1. **Analyze the screenshot**: identify visual type, title, X-axis, Y-axis/values, series/legend, colors.
-2. **Map to tables/columns**: use the table reference above to find the correct table and column names.
-3. **Read the current Layout**: extract from the `.pbix`, decode as UTF-16 LE (no BOM), parse JSON.
-4. **Determine position**: find the next available `y` position on the target page, use `x=0` or ask the user for layout preferences. Width/height follow standard grid (e.g., `width=400, height=300`).
-5. **Build the `visualContainer`**: construct config and filters as JSON strings, assign a `uuid` for `name`.
-6. **Write the Layout**: serialize with `json.dumps(separators=(',',':'), ensure_ascii=False)`, encode as `utf-16-le` (raw bytes, no BOM), write back.
-7. **Repack the `.pbix`**: use Python's `zipfile` module, NOT `shutil.make_archive`.
-8. **Verify**: confirm first 4 bytes of `Report/Layout` inside the new zip are `7B 00 22 00`.
+### Step 1 — Analyze the screenshot
+Identify: visual type, title, subtitle, X-axis field, Y-axis/values fields, series/legend field, colors.
+
+### Step 2 — Verify data availability (MANDATORY before writing any code)
+
+Check if every column needed by the visual exists in the table reference above.
+
+**If all columns exist** → proceed to Step 3.
+
+**If a column is missing**, follow this decision tree:
+
+#### 2a. Can it be derived from an existing table?
+- Check `source` columns: `totals_by_feature`, `totals_by_ide`, `totals_by_model_feature`, `totals_by_language_feature`, `pull_requests` contain nested data.
+- If yes: **add a new column** to the appropriate existing `.pq` file in `queries/` using `Table.AddColumn`.
+- Update the table reference in this agent file accordingly.
+
+#### 2b. Does it need a completely new query / table?
+- Check if a `.pq` file in `queries/` already handles the right data source but doesn't expose this field.
+- If so: create a new `.pq` file in `queries/` following the same pattern as existing files:
+  - Depends on `source` (organization_metrics.pq or enterprise_metrics.pq)
+  - Uses `Table.ExpandListColumn` / `Table.ExpandRecordColumn` on the relevant nested column
+  - Underscore-only column names
+  - Ends with `Table.TransformColumnTypes` for `day` → `type date`
+- Name the new query/table as `GH Copilot - <topic>` (e.g., `GH Copilot - ide by editor`).
+- Add the new table + columns to the table reference in this agent file.
+
+#### 2c. Is the data simply not available in the API?
+- The GitHub Copilot Usage Metrics API (v2026-03-10) response schema is:
+  ```
+  day_totals: {
+    day, daily_active_users, weekly_active_users, monthly_active_users,
+    user_initiated_interaction_count, code_acceptance_activity_count,
+    code_generation_activity_count, loc_added_sum, loc_suggested_to_add_sum,
+    pull_requests: { total_created, total_merged, total_reviewed,
+                     total_suggestions, total_applied_suggestions,
+                     total_created_by_copilot, total_reviewed_by_copilot },
+    totals_by_feature: [{ feature, user_initiated_interaction_count, ... }],
+    totals_by_ide: [{ ide, ... }],
+    totals_by_model_feature: [{ model, feature, user_initiated_interaction_count, ... }],
+    totals_by_language_feature: [{ language, feature, loc_added_sum,
+                                   code_acceptance_activity_count, ... }]
+  }
+  ```
+- If the field truly doesn't exist in the API → tell the user and suggest the closest available metric.
+
+#### After any query change:
+1. Edit the `.pq` file with the new/modified query M code.
+2. **Tell the user**: "Ho aggiornato `queries/nome_file.pq`. Apri Power BI Desktop → Transform data → Advanced Editor su `<nome query>` → incolla il nuovo codice → Chiudi e applica → Salva e chiudi."
+3. Wait for user confirmation before injecting the visual.
+
+### Step 3 — Read the current Layout
+Extract from the `.pbix`, decode UTF-16 LE (strip BOM if present), parse JSON.
+Find next available `y` on the target page: `max(v['y'] + v['height'] for v in page['visualContainers']) + 20`.
+
+### Step 4 — Build the `visualContainer`
+Construct `config` and `filters` as JSON strings. Assign a `uuid` for `name`.
+Use `json.loads(vc["config"])` to validate before inserting.
+
+### Step 5 — Repack and verify
+Use the safe repack pattern below. Verify `Report/Layout` first 4 bytes == `7B 00 22 00` and `[Content_Types].xml` is first entry.
+
+### Step 6 — Commit
+```
+git add samples/*.pbix queries/*.pq
+git commit -m "feat: add <visual name> visual [+ update <query> query if applicable]"
+```
 
 ---
 
@@ -217,8 +275,12 @@ print(f"OK — Layout: {data.hex().upper()}, entries: {len(entries)}")
 - NEVER use `shutil.make_archive` or `os.walk`+`ZipFile('w', ZIP_DEFLATED)` to repack — these corrupt entry order and the DataModel, causing "MashupValidationError" in Power BI.
 - NEVER extract the PBIX to disk and repack from disk. ALWAYS use the in-memory pattern above.
 - NEVER modify `DataModel`, `Connections`, `SecurityBindings`, or `Version` files.
+- NEVER use `git checkout -- samples/*.pbix` — it overwrites the user's DataModel changes.
 - ALWAYS use the exact table names from the table reference above (with spaces and dashes).
 - ALWAYS call `json.loads(vc["config"])` before inserting to validate config JSON.
 - ALWAYS verify after repack: Layout first bytes == `7B 00 22 00` AND `[Content_Types].xml` is first entry.
 - ALWAYS create a `.bak` backup before overwriting the PBIX, restore it on any exception.
+- ALWAYS check data availability (Step 2) before writing any injection code.
+- If a needed column is missing: edit the `.pq` file first, tell the user to apply it in Power BI, wait for confirmation.
 - If the screenshot shows a title, set it in `vcObjects.title`. If no title, omit `vcObjects`.
+- If the PBIX is open in Power BI Desktop, the repack will fail with PermissionError — tell the user to close it first.
