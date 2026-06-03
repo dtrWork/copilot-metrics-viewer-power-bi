@@ -196,34 +196,39 @@ def write_layout(layout: dict) -> bytes:
 
 def repack_pbix(pbix_path: str, new_layout_bytes: bytes):
     """
-    Rebuild PBIX with [Content_Types].xml ALWAYS first (OPC spec requirement).
-    Copies all other entries verbatim in original relative order.
-    Replaces ONLY Report/Layout.
-
-    CRITICAL: Power BI Desktop sometimes saves with 'Version' as first entry.
-    When Python rewrites such a ZIP preserving that order, Power BI can no
-    longer read the DataModel (MashupValidationError). The fix is to ALWAYS
-    force [Content_Types].xml first, regardless of the input file's entry order.
+    Safe repack — 3 critical rules:
+    1. [Content_Types].xml MUST be first (OPC spec requirement).
+       Power BI Desktop sometimes saves with 'Version' first — always override.
+    2. ZIP_STORED entries (compress_type=0) MUST be converted to ZIP_DEFLATED.
+       Root cause: Python cannot safely round-trip ZIP_STORED entries written by
+       Power BI Desktop — the DataModel becomes unreadable (MashupValidationError).
+       Power BI reads DEFLATED DataModel correctly (original repo PBIX uses it).
+    3. Only Report/Layout is replaced; all other entry bytes are preserved.
     """
     backup = pbix_path + '.bak'
     shutil.copy2(pbix_path, backup)
     try:
         with zipfile.ZipFile(backup, 'r') as zin:
             all_entries = zin.infolist()
-            # OPC spec: [Content_Types].xml MUST be the first entry
+            # Rule 1: [Content_Types].xml always first
             content_types = [e for e in all_entries if e.filename == '[Content_Types].xml']
             others = [e for e in all_entries if e.filename != '[Content_Types].xml']
-            ordered = content_types + others  # enforce [Content_Types].xml first
+            ordered = content_types + others
 
             with zipfile.ZipFile(pbix_path, 'w', allowZip64=True) as zout:
                 for item in ordered:
                     data = zin.read(item.filename)
                     if item.filename == 'Report/Layout':
                         new_item = zipfile.ZipInfo(item.filename, item.date_time)
-                        new_item.compress_type = item.compress_type
+                        new_item.compress_type = zipfile.ZIP_DEFLATED
                         zout.writestr(new_item, new_layout_bytes)
+                    elif item.compress_type == zipfile.ZIP_STORED:
+                        # Rule 2: convert STORED → DEFLATED
+                        new_item = zipfile.ZipInfo(item.filename, item.date_time)
+                        new_item.compress_type = zipfile.ZIP_DEFLATED
+                        zout.writestr(new_item, data)
                     else:
-                        # Copy verbatim: preserves compress_type and all metadata
+                        # Copy verbatim: preserves compress_type and metadata
                         zout.writestr(item, data)
         os.remove(backup)
     except Exception:
@@ -285,7 +290,7 @@ print(f"OK — Layout: {data.hex().upper()}, entries: {len(entries)}")
 
 - NEVER write the Layout with a BOM (`\xff\xfe`). Always verify `first_bytes == b'\x7b\x00'`.
 - NEVER use column names with dots (e.g., `chat.acceptance.rate`). Use underscores only.
-- NEVER preserve the input ZIP entry order blindly — Power BI Desktop sometimes saves with `Version` first, which breaks Python-repacked ZIPs. ALWAYS force `[Content_Types].xml` first.
+- NEVER preserve ZIP_STORED entries from a Power BI Desktop-saved PBIX — always convert them to ZIP_DEFLATED. Python cannot safely round-trip ZIP_STORED DataModel entries (causes MashupValidationError). Power BI reads DEFLATED DataModel correctly.
 - NEVER extract the PBIX to disk and repack from disk. ALWAYS use the in-memory pattern above.
 - NEVER modify `DataModel`, `Connections`, `SecurityBindings`, or `Version` files.
 - NEVER use `git checkout -- samples/*.pbix` — it overwrites the user's DataModel changes.
