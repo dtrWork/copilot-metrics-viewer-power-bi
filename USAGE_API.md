@@ -1,6 +1,10 @@
 # GitHub Copilot Metrics Viewer for Power BI
 
-> **Note:** The legacy GitHub Copilot Usage API is deprecated. Please refer to the new [GitHub Copilot Metrics API](https://github.com/orgs/community/discussions/141071).
+> **⚠️ Deprecated:** The GitHub Copilot Usage API (`/copilot/usage`) referenced in this document is **deprecated**. Please migrate to the new [Copilot Usage Metrics API](https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics?apiVersion=2026-03-10) (`apiVersion=2026-03-10`). See [README.md](README.md) for updated setup instructions.
+
+---
+
+*The content below is preserved for reference only. Use the new API as documented in [README.md](README.md).*
 
 Located in the  `./samples` directory you'll find sample JSON and PBIX files used to create the dashboard below.
 
