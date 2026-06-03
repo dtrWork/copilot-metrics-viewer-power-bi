@@ -196,22 +196,35 @@ def write_layout(layout: dict) -> bytes:
 
 def repack_pbix(pbix_path: str, new_layout_bytes: bytes):
     """
-    Rebuild PBIX preserving EXACT entry order and compress_type.
-    Never extracts to disk. Only Report/Layout is replaced.
+    Rebuild PBIX with [Content_Types].xml ALWAYS first (OPC spec requirement).
+    Copies all other entries verbatim in original relative order.
+    Replaces ONLY Report/Layout.
+
+    CRITICAL: Power BI Desktop sometimes saves with 'Version' as first entry.
+    When Python rewrites such a ZIP preserving that order, Power BI can no
+    longer read the DataModel (MashupValidationError). The fix is to ALWAYS
+    force [Content_Types].xml first, regardless of the input file's entry order.
     """
     backup = pbix_path + '.bak'
     shutil.copy2(pbix_path, backup)
     try:
         with zipfile.ZipFile(backup, 'r') as zin:
+            all_entries = zin.infolist()
+            # OPC spec: [Content_Types].xml MUST be the first entry
+            content_types = [e for e in all_entries if e.filename == '[Content_Types].xml']
+            others = [e for e in all_entries if e.filename != '[Content_Types].xml']
+            ordered = content_types + others  # enforce [Content_Types].xml first
+
             with zipfile.ZipFile(pbix_path, 'w', allowZip64=True) as zout:
-                for item in zin.infolist():
+                for item in ordered:
+                    data = zin.read(item.filename)
                     if item.filename == 'Report/Layout':
                         new_item = zipfile.ZipInfo(item.filename, item.date_time)
                         new_item.compress_type = item.compress_type
                         zout.writestr(new_item, new_layout_bytes)
                     else:
                         # Copy verbatim: preserves compress_type and all metadata
-                        zout.writestr(item, zin.read(item.filename))
+                        zout.writestr(item, data)
         os.remove(backup)
     except Exception:
         shutil.copy2(backup, pbix_path)  # restore on failure
@@ -272,7 +285,7 @@ print(f"OK — Layout: {data.hex().upper()}, entries: {len(entries)}")
 
 - NEVER write the Layout with a BOM (`\xff\xfe`). Always verify `first_bytes == b'\x7b\x00'`.
 - NEVER use column names with dots (e.g., `chat.acceptance.rate`). Use underscores only.
-- NEVER use `shutil.make_archive` or `os.walk`+`ZipFile('w', ZIP_DEFLATED)` to repack — these corrupt entry order and the DataModel, causing "MashupValidationError" in Power BI.
+- NEVER preserve the input ZIP entry order blindly — Power BI Desktop sometimes saves with `Version` first, which breaks Python-repacked ZIPs. ALWAYS force `[Content_Types].xml` first.
 - NEVER extract the PBIX to disk and repack from disk. ALWAYS use the in-memory pattern above.
 - NEVER modify `DataModel`, `Connections`, `SecurityBindings`, or `Version` files.
 - NEVER use `git checkout -- samples/*.pbix` — it overwrites the user's DataModel changes.
