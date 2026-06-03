@@ -1,8 +1,7 @@
 let
     // Depends on: source query (organization_metrics.pq or enterprise_metrics.pq)
-    // One row per day per language per feature.
-    // totals_by_language_feature items have the same field names as day-level totals,
-    // so they are renamed here with a "lang_" prefix to avoid conflicts.
+    // One row per day per language per feature (all features, not just code_completion).
+    // Use ide_code_completions_editors.pq for code-completion-specific visuals with old column names.
     Expanded = Table.ExpandListColumn(source, "totals_by_language_feature"),
     Fields = Table.ExpandRecordColumn(Expanded, "totals_by_language_feature",
         {
